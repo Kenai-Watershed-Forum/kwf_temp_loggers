@@ -1,23 +1,40 @@
 project:
   type: book
+  output-dir: docs
 
 book:
-  title: "quarto_book_template_20230412"
-  author: "Jane Doe"
-  date: "4/12/2023"
+  title: "Kenai Watershed Forum Water Temperature Loggers [DRAFT]"
+  author: "Benjamin Meyer, Kenai Watershed Forum"
+  date: "`r Sys.Date`"
+  page-navigation: true
   chapters:
     - index.qmd
-    - intro.qmd
+    - methods.qmd
     - summary.qmd
     - references.qmd
+
+  repo-url: https://github.com/Kenai-Watershed-Forum/kwf_temp_loggers
+  repo-actions: [edit]
+  search:
+    location: sidebar
+    type: textbox
+  downloads: [docx]
 
 bibliography: references.bib
 
 format:
   html:
     theme: cosmo
-  pdf:
-    documentclass: scrreprt
+  #pdf:
+  #  documentclass: scrreprt
+  docx:
+    toc: true
+    toc-depth: 2
+    toc-title: Table of contents
+    number-sections: true
+    highlight-style: github
 
 editor: visual
+
+prefer-html: true
 
