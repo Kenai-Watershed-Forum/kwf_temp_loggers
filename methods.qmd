@@ -33,7 +33,7 @@ library(zip)
 
 Our program currently includes water temperature data from a total of X locations throughout the central Kenai Peninsula.
 
-From 2008-2012 we worked with Cook Inletkeeper to establish water temperature monitoring sites with HOBO TempPro v2 loggers. We have continued to maintain a subset of these sites beyond the inital project, and currently maintain long-term sites at the following locations:
+From 2008-2012 we worked with Cook Inletkeeper to maintain water temperature monitoring sites with HOBO TempPro v2 loggers at various cites in the central Kenai Peninsula region. We have continued to maintain a subset of these sites beyond the initial project, and currently maintain long-term sites at the following locations:
 
 -   Kenai River Tributaries
 
