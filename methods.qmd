@@ -1,10 +1,295 @@
-# Introduction
+# Methods
 
-This is a book created from markdown and executable code.
+```{r echo = F, message=F}
 
-See @knuth84 for additional discussion of literate programming.
+# working to adapt script from beaver creek methods 4/12/2023
 
-```{r}
-1 + 1
+# AKTEMP seperate templates
+## file
+## station
+# clear environment
+rm(list=ls()) # clearing environment
+graphics.off() # clearing graphic device
+cat("\014") # clearing console
+# load packages
+library(tidyverse)
+library(readxl)
+library(magrittr)
+library(xfun)
+library(janitor)
+library(hms)
+library(plotly)
+library(qdapRegex)
+library(lubridate)
+library(zip)
+# use quarto render --cache-refresh in terminal if necessary
+```
 
+<br>
+
+## Water Temperature Loggers
+
+### Locations
+
+Our program currently includes water temperature data from a total of X locations throughout the central Kenai Peninsula.
+
+From 2008-2012 we worked with Cook Inletkeeper to establish water temperature monitoring sites with HOBO TempPro v2 loggers. We have continued to maintain a subset of these sites beyond the inital project, and currently maintain long-term sites at the following locations:
+
+-   Kenai River Tributaries
+
+    -   Moose River
+
+    -   Soldotna Creek
+
+    -   Funny River
+
+    -   Slikok Creek
+
+    -   Beaver Creek
+
+-   Kasilof River Tributary
+
+    -   Crooked Creek
+
+Site locations and other metadata are available for download in the link below.
+
+```{r echo = F}
+# prepare temperature logger station metadata
+station <- read_xlsx("other/input/all_loggers_and_wells_locations_notes.xlsx") %>%
+  filter(site_type == "temp_logger",
+         !is.na(latitude)) %>%
+  select(site_id,
+         latitude,longitude,
+         logger_serial,
+         location_notes)
+# format station info so that contents fit in AKTEMP template
+station %<>%
+  mutate(
+    "Code" = site_id,
+    "Latitude" = latitude,
+    "Longitude" = longitude,
+    "Timezone" = "US/Alaska (UTC-9 / UTC-8)",
+    "Description" = location_notes,
+    "Waterbody Name" = "Beaver Creek",
+    "Waterbody Type" = "STREAM",
+    "Placement" = "MAIN", # all loggers in this project placed in mainstem channel
+    "Well-mixed" = "TRUE",
+    "Active" = "TRUE",
+    "Reference URL" = "TBD",
+    "Private" = "FALSE") 
+# acquire and inspect all column names from AKTEMP template
+aktemp_station_colnames <- read_excel("other/input/AKTEMP_templates/AKTEMP-stations-template.xlsx", sheet = "STATIONS") %>%
+  colnames()
+# subset columns to those which are provided in the AKTEMP template
+station %<>%
+  select(one_of(aktemp_station_colnames),"logger_serial")
+# export csv to local repo
+write.csv(station,"other/output/station.csv", row.names = F)
+```
+
+```{r, echo = F}
+# Download station metadata
+xfun::embed_file("other/output/station.csv", text = "Download Temperature Logger Site Metadata for USGS / KWF Beaver Creek Hydrology Project")
+```
+
+<br>
+
+An ArcGIS Online map of site locations is displayed below. The map may also be accessed at <https://arcg.is/0ySarv1>.
+
+<br>
+
+```{=html}
+<style>.embed-container {position: relative; padding-bottom: 80%; height: 0; max-width: 100%;} .embed-container iframe, .embed-container object, .embed-container iframe{position: absolute; top: 0; left: 0; width: 100%; height: 100%;} small{position: absolute; z-index: 40; bottom: 0; margin-bottom: -15px;}</style>
+```
+::: embed-container
+<small><a href="//kwf.maps.arcgis.com/apps/Embed/index.html?webmap=97eeaaf4e3ce4ecfa7ee2228b0373c07&extent=-151.3279,60.5578,-150.8627,60.6559&home=true&zoom=true&scale=true&search=true&searchextent=true&basemap_gallery=true&disable_scroll=true&theme=light" style="color:#0000FF;text-align:left" target="_blank">View larger map</a></small><br><iframe width="500" height="400" frameborder="0" scrolling="no" marginheight="0" marginwidth="0" title="Beaver Creek Groundwater and Stream Temperature" src="//kwf.maps.arcgis.com/apps/Embed/index.html?webmap=97eeaaf4e3ce4ecfa7ee2228b0373c07&extent=-151.3279,60.5578,-150.8627,60.6559&home=true&zoom=true&previewImage=false&scale=true&search=true&searchextent=true&basemap_gallery=true&disable_scroll=true&theme=light"></iframe>
+:::
+
+<br>
+
+### Water Temperature Logger QA/QC Checks
+
+#### Pre-deployment
+
+Prior to deployment, all water temperature loggers undergo a QA/QC check as described in [@mauger2015].
+
+#### Site Checks
+
+Content TBD here.
+
+#### Post-deployment
+
+We downloaded data from all loggers in September/October 2022, and reviewed it in Spring 2023. Each logger's time series was visually inspected in an R Shiny plot for data that is non-representative of stream channel conditions, such as exposure to air or burial in sand.
+
+Segments of each time series identified as non-representative of stream channel conditions were flagged in a seperate csv file, then applied to flag and remove these segments.
+
+An example plot for one logger is shown below, with flagged data in red and retained data in black.
+
+```{r, echo = F, cache = TRUE}
+# Prepare water temperature data for inspection
+# read in seperate csv to match site metadata with logger serial number
+# check out what format / procedure is need for data upload to AKTEMP; see if the above process matches the needs of this outcome
+## read in and prepare logger data
+# Note: we have logger data both from the KWF site and the nearby (~200 m upstream) UAA site
+## choose location of all UNMODIFIED csv files downloaded from HOBOware
+# roll over the csv files in the "input" folder pulling in data
+dir <- "other/input/temperature_loggers/csv/"
+csvNames <- sort(list.files(dir, full.names = TRUE))
+allData <- list()
+colTypes <- cols("i", "c", "d", "?", "_", "_", "_")
+# run loop
+for (i in seq_along(csvNames)) {
+  tmpData <- read_csv(csvNames[i], col_types = colTypes, skip = 1) %>%
+    select(starts_with(c("Date","Temp")))
+  colnames(tmpData) <- c("date_time","temp_C")
+  tmpData %<>% transform(date_time = mdy_hms(date_time))
+  tmpData$logger_serial <- ex_between(csvNames[i], "csv/", ".csv")
+  allData[[i]] <- tmpData
+}
+# merge all the datasets into one data frame
+allData <- do.call(rbind, allData) %>%
+  distinct()
+```
+
+```{r echo = F}
+# general approach:
+# 1.) use plotly to visually observe each time series from an individual logger
+# 2.) create csv of time periods that need to be flagged for each logger
+# manual procedure
+# create ggplotly chart for each time series, one at a time, 
+ 
+# set logger id
+# remove hashtags below one at a time to plot. Double-hashtag indicates that a visual inspection was completed
+##logger <-10816960
+##logger <-20012591
+##logger <-20625008
+##logger <-21235340
+##logger <-21235341
+##logger <-21235343
+##logger <-21444843
+##logger <-21444844
+##logger <-21444869
+##logger <-21444870
+##logger <-21444872
+##logger <-21444873
+logger <-21444874
+##logger <-21488145
+```
+
+```{r, echo = F, eval = F}
+# remove "eval = F" when we want to use this plot during qa/qc
+# plot
+ggplotly(
+  p <- allData %>%
+  # modified site one at a time here to visually inspect datasets
+  filter(logger_serial == logger) %>%
+  ggplot(aes(date_time,temp_C)) +
+  geom_point() +
+  ggtitle(paste("Logger",logger, "pre-inspection")),
+  # plot size
+  height = 350, width = 600
+  )
+```
+
+```{r echo = F}
+# read in file of visually identified flagged data
+flagData <- read.csv("other/input/temperature_loggers/qa_qc/temp_logger_flagged_data.csv", sep = ",") %>%
+  select(-notes) %>% drop_na() %>%
+  transform(date_time_start = mdy_hm(date_time_start),
+            date_time_stop = mdy_hm(date_time_stop)) %>%
+  transform(logger_serial = as.character(logger_serial))
+# mark flagged events in the full record
+# ------------------------------------------------------------------------------
+# all starts usable
+allData$useData <- 1
+# then we roll over the flags identifying matching rows in the full record
+flagPivs <- unique(unlist(apply(flagData, 1, function(v) {
+  which(allData$logger_serial == v[1] & 
+          allData$date_time >= as_datetime(v[2]) & 
+          allData$date_time <= as_datetime(v[3]))
+})))
+# finally, we mark all useData values of bad events as 0
+allData$useData[flagPivs] <- 0
+```
+
+```{r echo = F}
+# plot with flagged data in red
+ggplotly(
+  p <- allData %>%
+    # modified site one at a time here to visually inspect datasets
+    filter(logger_serial == logger) %>%
+    mutate(status = case_when(
+      useData == 1 ~ "Keep",
+      useData == 0 ~ "Remove")) %>%
+    ggplot(aes(date_time,temp_C, color = status)) +
+    geom_point() +
+    scale_colour_manual("Status",values=c("black","red")) +
+    ggtitle(paste("Logger",logger, "with flagged data")),
+  # plot size
+  height = 350, width = 600
+  )
+```
+
+Records for time periods flagged for individual loggers are recorded and available to view at the download below.
+
+```{r, echo = F}
+# Download flagged data
+xfun::embed_file("other/input/temperature_loggers/qa_qc/temp_logger_flagged_data.csv", text = "Download Temperature Logger Flagged Data Records")
+```
+
+### Preliminary Water Temperature Data
+
+Water temperature will be applied as part of ongoing watershed-scale modeling efforts. At a later stage, it will be housed in a public repository such as AKTEMP (<https://aktemp.uaa.alaska.edu>) and others.
+
+Preliminary water temperature files are available for download at the link below.
+
+```{r echo = F, message = F}
+# exclude flagged data
+allData %<>%
+  filter(useData == 1) %>%
+  select(-useData) %>%
+  transform(logger_serial = as.character(logger_serial))
+# join temperature data to site metadata
+allData <- left_join(allData,station)
+# prep format for AKTEMP database
+## --> not done here yet
+# export individual time series from each site
+# method copied from from https://gist.github.com/jflanaga/1ab2fa1434064780d2237e73d9e669c4
+# set output directory
+temp_output_dir <- "other/output/post_qa_data/"
+allData %>% 
+  group_by(logger_serial) %>% 
+  group_walk(~ write_csv(.x, paste0(temp_output_dir,.y$logger_serial,".csv")))
+# zip multiple csv files
+zip_files <- list.files(path = temp_output_dir, pattern = ".csv$", full.names=TRUE)
+zipfile <- paste0(temp_output_dir,"beaver_creek_water_temps_",Sys.Date(),".zip")
+# remove old zip file
+file.remove(zipfile)
+# create new zipfile
+zip::zipr(zipfile, files = zip_files)
+```
+
+```{r echo = F}
+# download zip file
+xfun::embed_file(zipfile, text = "Download Zip File of Post-QA/QC Water Temperature Logger Data")
+```
+
+```{r echo = F}
+# Parts of the above script was developed with assistance from Dr. Jose Bentancourt in April 2023: https://www.linkedin.com/in/djbetancourt/
+```
+
+Footer © 2023 GitHub, Inc. Footer navigation
+
+```         
+Terms
+Privacy
+Security
+Status
+Docs
+Contact GitHub
+Pricing
+API
+Training
+Blog
+About
 ```
