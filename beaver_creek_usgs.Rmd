@@ -611,19 +611,22 @@ Calculate average of two loggers where time overlap exists
 
 ```{r}
 # calculate average of two loggers where overlap exists
-allData %>%
+allData %<>%
   group_by(date_time,useData) %>%
   summarise(avg_temp_C = mean(temp_C))
 
+# plot
 allData %>%
   filter(useData == 1) %>%
   ggplot(aes(date_time,avg_temp_C)) +
-  geom_point()
+  geom_point() +
+  ggtitle("Beaver Creek Water Temperature 2019-2022, Site TL-12")
+
+# save csv
+write.csv(allData,"other/output/beaver_creek_2019_2022")
   
 ```
 
 
-Plot logger durations: https://stackoverflow.com/questions/36039858/plot-durations-as-lines-with-ggplot2
 
-Calculate avg of two loggers when twin data exists (pivot_wider for datetime)
 
