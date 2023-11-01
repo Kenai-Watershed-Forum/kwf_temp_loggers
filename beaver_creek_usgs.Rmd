@@ -1,0 +1,598 @@
+
+# Beaver Creek
+
+---
+execute:
+  echo: false
+  freeze: auto
+date: "`r Sys.Date()`"
+format:
+  html:
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+---
+
+```{r echo = F, message=F}
+
+# use same quarto settings as outlined in wqx repo (view code, link to github, download ms word or pdf, etc)
+
+# AKTEMP seperate templates
+## file
+## station
+
+# clear environment
+rm(list=ls()) # clearing environment
+graphics.off() # clearing graphic device
+cat("\014") # clearing console
+
+# load packages
+library(tidyverse)
+library(readxl)
+library(magrittr)
+library(xfun)
+library(janitor)
+library(hms)
+library(plotly)
+library(qdapRegex)
+library(lubridate)
+library(leaflet)
+
+# use quarto render --cache-refresh in terminal if necessary
+
+# note - consider turning each of the steps into functions
+```
+
+<br>
+
+Prep 2019-2022 data from beaver creek
+
+```{r echo = F, message=FALSE}
+# prepare temperature logger station metadata
+station <- read_xlsx("other/input/beaver_creek_site.xlsx") %>%
+  clean_names() 
+
+# format station info so that contents fit in AKTEMP template
+station %<>%
+  mutate(
+    "Code" = "Beaver Creek",
+    "Latitude" = latitude,
+    "Longitude" = longitude,
+    "Timezone" = "US/Alaska (UTC-9 / UTC-8)",
+    "Description" = location_notes,
+    "Waterbody Name" = "Beaver Creek",
+    "Waterbody Type" = "STREAM",
+    "Placement" = "MAIN", # all loggers in this project placed in mainstem channel
+    "Well-mixed" = "TRUE",
+    "Active" = "TRUE",
+    "Reference URL" = "TBD",
+    "Private" = "FALSE",)
+
+# acquire and inspect all column names from AKTEMP template
+aktemp_station_colnames <- read_excel("other/input/AKTEMP_templates/AKTEMP-stations-template.xlsx", sheet = "STATIONS") %>%
+  colnames()
+
+# subset columns to those which are provided in the AKTEMP template
+station %<>%
+  select(one_of(aktemp_station_colnames)) %>%
+ # transform(logger_serial = as.character(logger_serial)) %>%
+  filter(!is.na(Code))
+
+# export csv to local repo
+write.csv(station,"other/output/station.csv", row.names = F)
+
+```
+
+<br>
+
+### 2019
+
+```{r, echo = F, cache = TRUE}
+
+# Prepare water temperature data for inspection
+## for "dir", choose location of all UNMODIFIED csv files downloaded from HOBOware
+# roll over the csv files in the "input" folder pulling in data
+
+# CHOOSE YEAR
+year <- "2019"
+dir <- paste0("other/input/csv/",year,"/")
+csvNames <- sort(list.files(dir, full.names = TRUE))
+allData <- list()
+colTypes <- cols("i", "c", "d", "?", "_", "_", "_")
+
+# run loop
+for (i in seq_along(csvNames)) {
+  tmpData <- read_csv(csvNames[i], col_types = colTypes, skip = 1) %>%
+    select(starts_with(c("Date","Temp")))
+  colnames(tmpData) <- c("date_time","temp_C")
+  tmpData %<>% transform(date_time = mdy_hms(date_time))
+  tmpData$logger_serial <- ex_between(csvNames[i], paste0("csv/",year,"/"), ".csv")
+  allData[[i]] <- tmpData
+}
+
+# merge all the datasets into one data frame
+allData <- do.call(rbind, allData) %>%
+  distinct()
+
+```
+
+```{r echo = F}
+# general approach:
+# 1.) use plotly to visually observe each time series from an individual logger
+# 2.) create csv of time periods that need to be flagged for each logger
+
+# manual procedure
+# create ggplotly chart for each time series, one at a time, 
+ 
+# set logger id
+# remove hashtags below one at a time to plot. Double-hashtag indicates that a visual inspection was completed
+
+##logger <-20635546
+logger <-20012612
+
+```
+
+```{r, echo = F, eval = F}
+# remove "eval = F" when we want to use this plot during qa/qc
+# plot
+ggplotly(
+  p <- allData %>%
+  # modified site one at a time here to visually inspect datasets
+  filter(logger_serial == logger) %>%
+  ggplot(aes(date_time,temp_C)) +
+  geom_point() +
+  ggtitle(paste("Logger",logger, "pre-inspection")),
+  # plot size
+  height = 350, width = 600
+  )
+
+```
+
+```{r echo = F}
+
+# read in file of visually identified flagged data
+flagData <- read.csv("other/input/csv/temp_logger_flagged_data.csv", sep = ",") %>%
+  select(-notes) %>% drop_na() %>%
+  transform(date_time_start = mdy_hm(date_time_start),
+            date_time_stop = mdy_hm(date_time_stop)) %>%
+  transform(logger_serial = as.character(logger_serial))
+
+# mark flagged events in the full record
+# ------------------------------------------------------------------------------
+# all starts usable
+allData$useData <- 1
+
+# then we roll over the flags identifying matching rows in the full record
+flagPivs <- unique(unlist(apply(flagData, 1, function(v) {
+  which(allData$logger_serial == v[1] & 
+          allData$date_time >= as_datetime(v[2]) & 
+          allData$date_time <= as_datetime(v[3]))
+})))
+
+# finally, we mark all useData values of bad events as 0
+allData$useData[flagPivs] <- 0
+
+```
+
+```{r echo = F}
+
+# plot with flagged data in red
+ggplotly(
+  p <- allData %>%
+    # modified site one at a time here to visually inspect datasets
+    filter(logger_serial == logger) %>%
+    mutate(status = case_when(
+      useData == 1 ~ "Keep",
+      useData == 0 ~ "Remove")) %>%
+    ggplot(aes(date_time,temp_C, color = status)) +
+    geom_point() +
+    scale_colour_manual("Status",values=c("black","red")) +
+    ggtitle(paste("Logger",logger, "with flagged data")),
+  # plot size
+  height = 350, width = 600
+  )
+
+```
+
+Records for time periods flagged for individual loggers are recorded and available to view at the download below.
+
+```{r, echo = F}
+# Download flagged data
+
+xfun::embed_file("other/input/csv/temp_logger_flagged_data.csv", text = "Download Temperature Logger Flagged Data Records from Fall 2022 QA/QC")
+
+# rename existing allData dataframe as 2019 specifically
+allData_2019 <- allData
+rm(allData)
+
+```
+
+<br>
+
+### 2020
+
+```{r, echo = F, cache = TRUE}
+
+# Prepare water temperature data for inspection
+## for "dir", choose location of all UNMODIFIED csv files downloaded from HOBOware
+# roll over the csv files in the "input" folder pulling in data
+
+# CHOOSE YEAR
+year <- "2020"
+dir <- paste0("other/input/csv/",year,"/")
+csvNames <- sort(list.files(dir, full.names = TRUE))
+allData <- list()
+colTypes <- cols("i", "c", "d", "?", "_", "_", "_")
+
+# run loop
+for (i in seq_along(csvNames)) {
+  tmpData <- read_csv(csvNames[i], col_types = colTypes, skip = 1) %>%
+    select(starts_with(c("Date","Temp")))
+  colnames(tmpData) <- c("date_time","temp_C")
+  tmpData %<>% transform(date_time = mdy_hms(date_time))
+  tmpData$logger_serial <- ex_between(csvNames[i], paste0("csv/",year,"/"), ".csv")
+  allData[[i]] <- tmpData
+}
+
+# merge all the datasets into one data frame
+allData <- do.call(rbind, allData) %>%
+  distinct()
+
+```
+
+```{r echo = F}
+# general approach:
+# 1.) use plotly to visually observe each time series from an individual logger
+# 2.) create csv of time periods that need to be flagged for each logger
+
+# manual procedure
+# create ggplotly chart for each time series, one at a time, 
+ 
+# set logger id
+# remove hashtags below one at a time to plot. Double-hashtag indicates that a visual inspection was completed
+
+
+logger <-20861215
+##logger <-20861209
+
+```
+
+```{r, echo = F, eval = F}
+# remove "eval = F" when we want to use this plot during qa/qc
+# plot
+ggplotly(
+  p <- allData %>%
+  # modified site one at a time here to visually inspect datasets
+  filter(logger_serial == logger) %>%
+  ggplot(aes(date_time,temp_C)) +
+  geom_point() +
+  ggtitle(paste("Logger",logger, "pre-inspection")),
+  # plot size
+  height = 350, width = 600
+  )
+
+```
+
+```{r echo = F}
+
+# read in file of visually identified flagged data
+flagData <- read.csv("other/input/csv/temp_logger_flagged_data.csv", sep = ",") %>%
+  select(-notes) %>% drop_na() %>%
+  transform(date_time_start = mdy_hm(date_time_start),
+            date_time_stop = mdy_hm(date_time_stop)) %>%
+  transform(logger_serial = as.character(logger_serial))
+
+# mark flagged events in the full record
+# ------------------------------------------------------------------------------
+# all starts usable
+allData$useData <- 1
+
+# then we roll over the flags identifying matching rows in the full record
+flagPivs <- unique(unlist(apply(flagData, 1, function(v) {
+  which(allData$logger_serial == v[1] & 
+          allData$date_time >= as_datetime(v[2]) & 
+          allData$date_time <= as_datetime(v[3]))
+})))
+
+# finally, we mark all useData values of bad events as 0
+allData$useData[flagPivs] <- 0
+
+```
+
+```{r echo = F}
+
+# plot with flagged data in red
+ggplotly(
+  p <- allData %>%
+    # modified site one at a time here to visually inspect datasets
+    filter(logger_serial == logger) %>%
+    mutate(status = case_when(
+      useData == 1 ~ "Keep",
+      useData == 0 ~ "Remove")) %>%
+    ggplot(aes(date_time,temp_C, color = status)) +
+    geom_point() +
+    scale_colour_manual("Status",values=c("black","red")) +
+    ggtitle(paste("Logger",logger, "with flagged data")),
+  # plot size
+  height = 350, width = 600
+  )
+
+```
+
+
+
+```{r, echo = F}
+# rename existing allData dataframe as 2019 specifically
+allData_2020 <- allData
+rm(allData)
+
+```
+
+
+<br>
+
+
+### 2021
+
+```{r, echo = F, cache = TRUE}
+
+# Prepare water temperature data for inspection
+## for "dir", choose location of all UNMODIFIED csv files downloaded from HOBOware
+# roll over the csv files in the "input" folder pulling in data
+
+# CHOOSE YEAR
+year <- "2021"
+dir <- paste0("other/input/csv/",year,"/")
+csvNames <- sort(list.files(dir, full.names = TRUE))
+allData <- list()
+colTypes <- cols("i", "c", "d", "?", "_", "_", "_")
+
+# run loop
+for (i in seq_along(csvNames)) {
+  tmpData <- read_csv(csvNames[i], col_types = colTypes, skip = 1) %>%
+    select(starts_with(c("Date","Temp")))
+  colnames(tmpData) <- c("date_time","temp_C")
+  tmpData %<>% transform(date_time = mdy_hms(date_time))
+  tmpData$logger_serial <- ex_between(csvNames[i], paste0("csv/",year,"/"), ".csv")
+  allData[[i]] <- tmpData
+}
+
+# merge all the datasets into one data frame
+allData <- do.call(rbind, allData) %>%
+  distinct()
+
+```
+
+```{r echo = F}
+# general approach:
+# 1.) use plotly to visually observe each time series from an individual logger
+# 2.) create csv of time periods that need to be flagged for each logger
+
+# manual procedure
+# create ggplotly chart for each time series, one at a time, 
+ 
+# set logger id
+# remove hashtags below one at a time to plot. Double-hashtag indicates that a visual inspection was completed
+
+
+##logger <-20012591
+logger <-20635545
+
+```
+
+```{r, echo = F, eval = F}
+# remove "eval = F" when we want to use this plot during qa/qc
+# plot
+ggplotly(
+  p <- allData %>%
+  # modified site one at a time here to visually inspect datasets
+  filter(logger_serial == logger) %>%
+  ggplot(aes(date_time,temp_C)) +
+  geom_point() +
+  ggtitle(paste("Logger",logger, "pre-inspection")),
+  # plot size
+  height = 350, width = 600
+  )
+
+```
+
+```{r echo = F}
+
+# read in file of visually identified flagged data
+flagData <- read.csv("other/input/csv/temp_logger_flagged_data.csv", sep = ",") %>%
+  select(-notes) %>% drop_na() %>%
+  transform(date_time_start = mdy_hm(date_time_start),
+            date_time_stop = mdy_hm(date_time_stop)) %>%
+  transform(logger_serial = as.character(logger_serial))
+
+# mark flagged events in the full record
+# ------------------------------------------------------------------------------
+# all starts usable
+allData$useData <- 1
+
+# then we roll over the flags identifying matching rows in the full record
+flagPivs <- unique(unlist(apply(flagData, 1, function(v) {
+  which(allData$logger_serial == v[1] & 
+          allData$date_time >= as_datetime(v[2]) & 
+          allData$date_time <= as_datetime(v[3]))
+})))
+
+# finally, we mark all useData values of bad events as 0
+allData$useData[flagPivs] <- 0
+
+```
+
+```{r echo = F}
+
+# plot with flagged data in red
+ggplotly(
+  p <- allData %>%
+    # modified site one at a time here to visually inspect datasets
+    filter(logger_serial == logger) %>%
+    mutate(status = case_when(
+      useData == 1 ~ "Keep",
+      useData == 0 ~ "Remove")) %>%
+    ggplot(aes(date_time,temp_C, color = status)) +
+    geom_point() +
+    scale_colour_manual("Status",values=c("black","red")) +
+    ggtitle(paste("Logger",logger, "with flagged data")),
+  # plot size
+  height = 350, width = 600
+  )
+
+```
+
+
+
+```{r, echo = F}
+# rename existing allData dataframe as 2019 specifically
+allData_2021 <- allData
+rm(allData)
+
+```
+
+<br>
+
+### 2022
+
+```{r, echo = F, cache = TRUE}
+
+# Prepare water temperature data for inspection
+## for "dir", choose location of all UNMODIFIED csv files downloaded from HOBOware
+# roll over the csv files in the "input" folder pulling in data
+
+# CHOOSE YEAR
+year <- "2022"
+dir <- paste0("other/input/csv/",year,"/")
+csvNames <- sort(list.files(dir, full.names = TRUE))
+allData <- list()
+colTypes <- cols("i", "c", "d", "?", "_", "_", "_")
+
+# run loop
+for (i in seq_along(csvNames)) {
+  tmpData <- read_csv(csvNames[i], col_types = colTypes, skip = 1) %>%
+    select(starts_with(c("Date","Temp")))
+  colnames(tmpData) <- c("date_time","temp_C")
+  tmpData %<>% transform(date_time = mdy_hms(date_time))
+  tmpData$logger_serial <- ex_between(csvNames[i], paste0("csv/",year,"/"), ".csv")
+  allData[[i]] <- tmpData
+}
+
+# merge all the datasets into one data frame
+allData <- do.call(rbind, allData) %>%
+  distinct()
+
+```
+
+```{r echo = F}
+# general approach:
+# 1.) use plotly to visually observe each time series from an individual logger
+# 2.) create csv of time periods that need to be flagged for each logger
+
+# manual procedure
+# create ggplotly chart for each time series, one at a time, 
+ 
+# set logger id
+# remove hashtags below one at a time to plot. Double-hashtag indicates that a visual inspection was completed
+
+
+logger <-20012591
+##logger <-20635545
+
+```
+
+```{r, echo = F, eval = F}
+# remove "eval = F" when we want to use this plot during qa/qc
+# plot
+ggplotly(
+  p <- allData %>%
+  # modified site one at a time here to visually inspect datasets
+  filter(logger_serial == logger) %>%
+  ggplot(aes(date_time,temp_C)) +
+  geom_point() +
+  ggtitle(paste("Logger",logger, "pre-inspection")),
+  # plot size
+  height = 350, width = 600
+  )
+
+```
+
+```{r echo = F}
+
+# read in file of visually identified flagged data
+flagData <- read.csv("other/input/csv/temp_logger_flagged_data.csv", sep = ",") %>%
+  select(-notes) %>% drop_na() %>%
+  transform(date_time_start = mdy_hm(date_time_start),
+            date_time_stop = mdy_hm(date_time_stop)) %>%
+  transform(logger_serial = as.character(logger_serial))
+
+# mark flagged events in the full record
+# ------------------------------------------------------------------------------
+# all starts usable
+allData$useData <- 1
+
+# then we roll over the flags identifying matching rows in the full record
+flagPivs <- unique(unlist(apply(flagData, 1, function(v) {
+  which(allData$logger_serial == v[1] & 
+          allData$date_time >= as_datetime(v[2]) & 
+          allData$date_time <= as_datetime(v[3]))
+})))
+
+# finally, we mark all useData values of bad events as 0
+allData$useData[flagPivs] <- 0
+
+```
+
+```{r echo = F}
+
+# plot with flagged data in red
+ggplotly(
+  p <- allData %>%
+    # modified site one at a time here to visually inspect datasets
+    filter(logger_serial == logger) %>%
+    mutate(status = case_when(
+      useData == 1 ~ "Keep",
+      useData == 0 ~ "Remove")) %>%
+    ggplot(aes(date_time,temp_C, color = status)) +
+    geom_point() +
+    scale_colour_manual("Status",values=c("black","red")) +
+    ggtitle(paste("Logger",logger, "with flagged data")),
+  # plot size
+  height = 350, width = 600
+  )
+
+```
+
+
+
+```{r, echo = F}
+# rename existing allData dataframe as 2019 specifically
+allData_2022 <- allData
+rm(allData)
+
+```
+
+
+
+```{r echo = F}
+
+# combining data from multiple seasons
+
+# joining dataframes from multiple seasons
+
+# join post-QA/QC dataframes 
+allData <- bind_rows(allData_2019,allData_2020,allData_2021,allData_2022) %>%
+  # remove redundant data
+  distinct()
+
+# remove old dataframes
+rm(allData_2019,allData_2020,allData_2021,allData_2022)
+
+```
+
+
+
+Plot logger durations: https://stackoverflow.com/questions/36039858/plot-durations-as-lines-with-ggplot2
+
+Calculate avg of two loggers when twin data exists (pivot_wider for datetime)
+
