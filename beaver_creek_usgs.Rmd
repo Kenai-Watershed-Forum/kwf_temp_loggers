@@ -588,8 +588,39 @@ allData <- bind_rows(allData_2019,allData_2020,allData_2021,allData_2022) %>%
 # remove old dataframes
 rm(allData_2019,allData_2020,allData_2021,allData_2022)
 
+
+
 ```
 
+<br>
+
+Plot all individual loggers
+
+```{r echo = F}
+allData %>%
+  filter(useData == 1) %>%
+  ggplot(aes(date_time,temp_C, color = logger_serial)) +
+  geom_point()
+
+  
+```
+
+<br>
+
+Calculate average of two loggers where time overlap exists
+
+```{r}
+# calculate average of two loggers where overlap exists
+allData %>%
+  group_by(date_time,useData) %>%
+  summarise(avg_temp_C = mean(temp_C))
+
+allData %>%
+  filter(useData == 1) %>%
+  ggplot(aes(date_time,avg_temp_C)) +
+  geom_point()
+  
+```
 
 
 Plot logger durations: https://stackoverflow.com/questions/36039858/plot-durations-as-lines-with-ggplot2

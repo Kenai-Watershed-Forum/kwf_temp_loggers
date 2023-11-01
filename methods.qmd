@@ -55,7 +55,7 @@ Site locations and other metadata are available for download in the link below.
 
 ```{r echo = F}
 # prepare temperature logger station metadata
-station <- read_xlsx("other/input/all_loggers_and_wells_locations_notes.xlsx") %>%
+station <- read_xlsx("other/input/all_loggers_notes.xlsx") %>%
   filter(site_type == "temp_logger",
          !is.na(latitude)) %>%
   select(site_id,
